@@ -1,0 +1,1219 @@
+Program.Sub.ScreenSU.Start
+Gui.FrmMaster..Create
+Gui.FrmMaster..Caption("Work List")
+Gui.FrmMaster..Size(15435,10470)
+Gui.FrmMaster..MinX(0)
+Gui.FrmMaster..MinY(0)
+Gui.FrmMaster..Position(0,0)
+Gui.FrmMaster..BackColor(-2147483633)
+Gui.FrmMaster..MousePointer(0)
+Gui.FrmMaster..Event(UnLoad,FrmMaster_UnLoad)
+Gui.FrmMaster.GSGC_WORKLIST.Create(GsGridControl)
+Gui.FrmMaster.GSGC_WORKLIST.Size(15345,10185)
+Gui.FrmMaster.GSGC_WORKLIST.Position(-30,0)
+Gui.FrmMaster.GSGC_WORKLIST.Anchor(15)
+Gui.FrmMaster.GSGC_WORKLIST.Event(CellValueChanged,GSGC_WORKLIST_CellValueChanged)
+Gui.FrmMaster.GSGC_WORKLIST.Event(RowCellClick,GSGC_WORKLIST_RowCellClick)
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+V.Global.bCache.Declare
+v.Global.sGsGCIcon.Declare
+Program.External.Include.Library("GCG_5708_GET_MATL_SEQ.lib")
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+
+
+'f.Intrinsic.Debug.BenchmarkModeEnable
+	F.Intrinsic.Control.Try
+	V.Local.sError.Declare
+	
+	V.Local.bEditGrp.Declare
+	V.Local.bIssueGrp.Declare
+	V.Local.bWiptoFG.Declare
+	V.Local.sIcon.Declare
+	V.Local.sRet.Declare
+	V.Local.iDays.Declare
+	V.Local.sXML.Declare
+	
+	'replace XXXX and 9999 with arc number and gab with gcg
+	
+	F.Intrinsic.String.Build("{0}\Art\gss2.ico",V.Caller.GlobalDir,v.Local.sIcon)
+	F.Intrinsic.String.Build("{0}\GAB_GSS_Logo_Green_Dash.png",V.Caller.ArtDir,V.Global.sGsGCIcon)
+	Gui.FrmMaster..Icon(V.Local.sIcon)
+
+	F.ODBC.Connection!con.OpenConnection(V.Ambient.PDSN,V.Ambient.PUser,V.Ambient.PPass,600)
+
+	f.Intrinsic.Control.If("y",=,"y")		
+	'F.Intrinsic.Control.If(v.Ambient.IsInTaskScheduler)
+		'F.Intrinsic.UI.InvokeWaitDialog("Processing...","GCG 5728 Work List Cache")
+		V.Global.bCache.Set(False)
+		F.Intrinsic.Control.CallSub(checktable)
+		'F.Intrinsic.UI.ChangeWaitStatus("Processing Sub Load New Ops")
+		F.Intrinsic.Control.CallSub(Load_New_Ops_To_Custom_Table)
+		F.Intrinsic.Control.CallSub(Move_Old_Ops_To_History_Table)
+		F.Intrinsic.Control.CallSub(Load_Datatables)
+		F.Intrinsic.Control.CallSub(Update_Status)
+		F.Intrinsic.Control.CallSub(SaveXML)
+	F.Intrinsic.Control.Else		
+		F.Intrinsic.Control.CallSub(checktable)
+		v.Global.bCache.Set(True)
+		F.Intrinsic.Control.CallSub(Load_Datatables)
+		F.Intrinsic.Control.CallSub(Load_Gridview)
+		F.Intrinsic.Control.CallSub(SetContextMenus)
+		F.Intrinsic.Control.CallSub(Deserialize)
+		Gui.FrmMaster..Show
+	F.Intrinsic.Control.EndIf
+	
+	F.Intrinsic.Control.Catch
+		F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+		F.Intrinsic.UI.Msgbox(V.Local.sError)
+		F.Intrinsic.Control.End 
+	F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.Load_Datatables.Start
+f.Intrinsic.Control.Try
+v.Local.sError.Declare
+
+v.Local.sSQL.Declare
+v.Local.sXML.Declare
+v.Global.dDateTime.Declare
+v.Local.sCaption.Declare
+V.Local.sExpression.Declare
+V.Local.bFileExists.Declare
+
+f.Intrinsic.Control.If(v.DataTable.dtOpenOps.Exists)
+	f.Data.DataTable.Close("dtOpenOps")
+f.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.If(V.Global.bCache)
+	F.Intrinsic.String.Build("{0}\GAB_5728_{1}_WORKLIST.xml",V.Caller.FilesDir,V.Caller.CompanyCode,V.Local.sXML)
+	F.Intrinsic.File.Exists(V.Local.sXML,V.Local.bFileExists)
+	F.Intrinsic.Control.If(V.Local.bFileExists.Not)
+		F.Intrinsic.UI.Msgbox("Cache File Does Not Exist, Program Needs to Be Ran From Task Scheduler First","Cache File Missing")
+		f.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.File.GetFileDateTimeExtended(V.Local.sXML,3,True,V.Global.dDateTime)
+	F.Intrinsic.String.Build("Work List - Using Cached Data - {0}",V.Global.dDateTime,V.Local.sCaption)
+	Gui.FrmMaster..Caption(V.Local.sCaption)
+	F.Data.DataTable.CreateFromXML("dtOpenOps",V.Local.sXML,True)
+
+F.Intrinsic.Control.Else
+	'CREATE INITIAL DATATABLE
+	v.Local.sSQL.Set("SELECT A.JOB, A.SUFFIX, A.SEQ, CONCAT(A.JOB,A.SUFFIX) AS JS, CONCAT(A.JOB,CONCAT(A.SUFFIX,A.SEQ)) AS JSS, B.PRIORITY, CAST(CASE WHEN B.FLAG_WO_PRTD = 'Y' THEN 1 ELSE 0 END AS BIT) AS PRINTED, CAST(CASE WHEN B.FLAG_WO_RELEASED = 'Y' THEN 1 ELSE 0 END AS BIT) AS RELEASED, CAST(CASE WHEN B.FLAG_HOLD = 'Y' THEN 1 ELSE 0 END AS BIT) AS ONHOLD, CAST(CASE WHEN A.FLAG_SET_UP = 'Y' THEN 1 ELSE 0 END AS BIT) AS SETUP, A.DESCRIPTION, IF(C.SEQTYPE = 6,'TASK',RTRIM(D.SAR)) AS WORKCENTER, IF(C.SEQTYPE = 6,'TASK',D.RST) AS WORKGROUP, A.OPERATION, D.ROG AS WCDEPT, A.ROUTER, B.PART, B.PART_DESCRIPTION, A.UNITS_OPEN, A.UNITS_COMPLETE, A.HOURS_ESTIMATED, A.HOURS_ACTUAL, A.DATE_START, A.DATE_DUE, A.CREW_SIZE, CAST(CASE WHEN A.WORK_STARTED = 'Y' THEN 1 ELSE 0 END AS BIT) AS WORK_STARTED, E.NOTES, E.MATL_ORDERED, E.DATE_MATL_ORDERED, '' AS STATUS, '' AS STATUSNUMBER, E.STATUS AS OLDSTATUSNUMBER, E.PACKET_RECVD, E.DATE_PACKET_RECVD, CONVERT(0,SQL_BIT) AS IND_FLAG FROM V_JOB_OPERATIONS A LEFT JOIN V_JOB_HEADER B ON B.JOB = A.JOB AND B.SUFFIX = A.SUFFIX LEFT JOIN APSV3_JBLINES C ON C.JOB = A.JOB AND C.SFX = A.SUFFIX AND C.SEQ = CONVERT(A.SEQ,SQL_INTEGER) LEFT JOIN APSV3_UBDETAIL D ON D.JOB = A.JOB AND D.SFX = A.SUFFIX AND D.SEQ = CONVERT(A.SEQ,SQL_INTEGER) LEFT JOIN GCG_5728_WORK_LIST E ON E.JOB = A.JOB AND E.SUFFIX = A.SUFFIX AND E.SEQUENCE = A.SEQ WHERE A.LMO = 'L' AND A.FLAG_CLOSED <> 'Y' AND A.SEQ < '995000' ORDER BY A.JOB, A.SUFFIX, A.SEQ;")
+	
+	F.Data.DataTable.CreateFromSQL("dtOpenOpsWithIndirect","con",v.Local.sSQL,True)
+	
+	'Filter out Indirects
+	F.Data.Dictionary.CreateFromSQL("dIndirect","con","SELECT DISTINCT CONCAT(JOB,SUFFIX) AS JS,CONVERT(IF('' = '',1,0),SQL_BIT) FROM IND_LBR_ACCTS;")
+	F.Data.Dictionary.SetDefaultReturn("dIndirect",False)
+	F.Data.DataTable.FillFromDictionary("dtOpenOpsWithIndirect","dIndirect","JS","IND_FLAG")
+	F.Data.DataView.Create("dtOpenOpsWithIndirect","dvOpenOps",22,"IND_FLAG <> TRUE","")
+	F.Data.DataView.ToDataTable("dtOpenOpsWithIndirect","dvOpenOps","dtOpenOps",True)
+	F.Data.DataTable.Close("dtOpenOpsWithIndirect")
+	
+	'GET PREV SEQ
+	v.Local.sSQL.Set("SELECT A.JSS AS JSS, (SELECT MAX(RIGHT(CONCAT('000000',B.SEQ),6)) FROM APSV3_JBLINES B WHERE B.JS = A.JS AND B.SEQ < A.SEQ) AS PREVSEQ FROM APSV3_JBLINES A GROUP BY A.JSS ORDER BY A.JSS;")
+	F.Data.Dictionary.CreateFromSQL("dicPrevSeq","con",v.Local.sSQL)
+	F.Data.DataTable.AddColumn("dtOpenOps","PREVSEQ","STRING")
+	F.Data.Dictionary.SetDefaultReturn("dicPrevSeq","")
+	F.Data.DataTable.FillFromDictionary("dtOpenOps","dicPrevSeq","JSS","PREVSEQ")
+	F.Data.Dictionary.Close("dicPrevSeq")
+	
+	'GET PREVIOUS SEQUENCES WORKCENTER
+	v.Local.sSQL.Set("SELECT A.JSS AS JOBSFXPREVSEQ, IF(B.SEQTYPE = 6,'TASK',RTRIM(A.SAR)) AS PREVWORKCENTER FROM APSV3_UBDETAIL A LEFT JOIN APSV3_JBLINES B ON B.JSS = A.JSS;")
+	F.Data.DataTable.AddExpressionColumn("dtOpenOps","JOBSFXPREVSEQ","STRING","JS + PREVSEQ")
+	F.Data.Dictionary.CreateFromSQL("dicPrevWC","con",v.Local.sSQL)
+	F.Data.DataTable.AddColumn("dtOpenOps","PREVWORKCENTER","STRING")
+	F.Data.Dictionary.SetDefaultReturn("dicPrevWC","")
+	F.Data.DataTable.FillFromDictionary("dtOpenOps","dicPrevWC","JOBSFXPREVSEQ","PREVWORKCENTER")
+	F.Data.Dictionary.Close("dicPrevWC")
+	
+	'GET PREV SEQ CLOSED FLAG
+	V.Local.sSQL.Set("SELECT JSS AS JOBSFXPREVSEQ, CAST(CASE WHEN COMPLDATE IS NULL THEN 0 ELSE 1 END AS BIT) AS PREVSEQCOMPL FROM APSV3_JBLINES;")
+	F.Data.Dictionary.CreateFromSQL("dicPrevSeqCompl","con",v.Local.sSQL)
+	F.Data.DataTable.AddColumn("dtOpenOps","PREVSEQCOMPL","BOOLEAN")
+	F.Data.Dictionary.SetDefaultReturn("dicPrevSeqCompl",True)
+	F.Data.DataTable.FillFromDictionary("dtOpenOps","dicPrevSeqCompl","JOBSFXPREVSEQ","PREVSEQCOMPL")
+	F.Data.Dictionary.Close("dicPrevSeqCompl")
+	
+	'ADD REMAINING MAN HOURS
+	F.Data.DataTable.AddExpressionColumn("dtOpenOps","HOURS_REMAIN","FLOAT","HOURS_ESTIMATED-HOURS_ACTUAL")
+	
+	'ADD REMAINING MACHINE HOURS
+	F.Data.DataTable.AddExpressionColumn("dtOpenOps","MACH_HOURS_REMAIN","FLOAT","HOURS_REMAIN/IIF(CREW_SIZE=0,1.00,CREW_SIZE)")
+	
+	'CHECK START DATE AND PRIORITY
+	F.Intrinsic.String.Build("IIF(DATE_START <= #{0}# AND PRIORITY > '000','Y','N')",V.Ambient.Date,V.Local.sExpression)
+	F.Data.DataTable.AddExpressionColumn("dtOpenOps","PASTDUE","STRING",V.Local.sExpression)
+	
+	'CHECK PRIORITY AND STATUS
+	F.Data.DataTable.AddExpressionColumn("dtOpenOps","HIGHPRI","STRING","IIF(PRIORITY > '001' AND STATUS = 'ARRIVING',1,IIF(PRIORITY > '001' AND STATUS = 'READY',2,0))")
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End 
+F.Intrinsic.Control.EndTry
+
+Program.Sub.Load_Datatables.End
+
+Program.Sub.Load_Gridview.Start
+f.Intrinsic.Control.Try
+v.Local.sError.Declare
+'Function.Intrinsic.Debug.InvokeDebugger
+
+v.Local.iCnt.Declare
+v.Local.sFields.Declare
+V.Local.sExpression.Declare
+V.Local.bIsInGroup.Declare
+F.Global.Security.IsInGroup(V.Caller.User,"WORKLIST",V.Caller.CompanyCode,V.Local.bIsInGroup)
+
+GUI.FrmMaster.GSGC_WORKLIST.AddGridviewFromDatatable("GVOPENOPS","dtOpenOps")
+GUI.FrmMaster.GSGC_WORKLIST.SuspendLayout()
+GUI.FrmMaster.GSGC_WORKLIST.Icon(v.Global.sGsGCIcon)
+Gui.FrmMaster.GSGC_WORKLIST.SetGridViewProperty("GVOPENOPS","MultiSelect",True)
+Gui.FrmMaster.GSGC_WORKLIST.SetGridViewProperty("GVOPENOPS","AllowSort",True)
+Gui.FrmMaster.GSGC_WORKLIST.SetGridViewProperty("GVOPENOPS","AllowFilter",True)
+Gui.FrmMaster.GSGC_WORKLIST.SetGridViewProperty("GVOPENOPS","OptionsDetailShowDetailTabs",False)
+Gui.FrmMaster.GSGC_WORKLIST.SetGridViewProperty("GVOPENOPS","OptionsViewShowGroupPanel",True)
+Gui.FrmMaster.GSGC_WORKLIST.SetGridViewProperty("GVOPENOPS","OptionsMenuShowAutoFilterRowItem",True)
+f.Intrinsic.String.Split(v.DataTable.dtOpenOps.FieldNames, "*!*", v.Local.sFields)
+'f.Intrinsic.Control.For(v.Local.iCnt, 0, v.Local.sFields.UBound, 1)
+'	GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS", v.Local.sFields(v.Local.iCnt), "HeaderBackColor", v.Color.GSS)
+'	GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS", v.Local.sFields(v.Local.iCnt), "HeaderForeColor", v.Color.White)
+'F.Intrinsic.Control.Next(V.Local.iCnt)
+
+
+'SETCOLUMNPROPERTY--VISIBLE-CAPTION-ALLOWEDIT-READONLY-MINWIDTH-HEADERHALIGNMENT-CELLHALIGNMENT-CELLBACKCOLOR-CELLFORECOLOR-FIXED-DISPLAYCUSTOMNUMERIC-DISPLAYCUSTOMDATETIME
+'JOB
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JOB","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JOB","CAPTION","Job")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JOB","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JOB","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JOB","MINWIDTH",80)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JOB","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JOB","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JOB","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JOB","AllowSize",True)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JOB","CellForeColor","Blue")
+V.Local.sExpression.Set("[PACKET_RECVD] = TRUE")
+GUI.FrmMaster.GSGC_WORKLIST.AddStyleFormatCondition("GVOPENOPS","JOB","PACKETISRECVD","Expression",v.Local.sExpression)
+GUI.FrmMaster.GSGC_WORKLIST.SetStyleFormatConditionProperty("GVOPENOPS","JOB","PACKETISRECVD","BackColor","Yellow")
+V.Local.sExpression.Set("[MATL_ORDERED] = TRUE")
+GUI.FrmMaster.GSGC_WORKLIST.AddStyleFormatCondition("GVOPENOPS","JOB","MATERIALORDEREDJOB","Expression",v.Local.sExpression)
+GUI.FrmMaster.GSGC_WORKLIST.SetStyleFormatConditionProperty("GVOPENOPS","JOB","MATERIALORDEREDJOB","BackColor","Green")
+
+'SUFFIX
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SUFFIX","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SUFFIX","CAPTION","Suffix")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SUFFIX","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SUFFIX","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SUFFIX","MINWIDTH",60)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SUFFIX","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SUFFIX","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SUFFIX","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SUFFIX","AllowSize",True)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SUFFIX","CellForeColor","Blue")
+V.Local.sExpression.Set("[PACKET_RECVD] = TRUE")
+GUI.FrmMaster.GSGC_WORKLIST.AddStyleFormatCondition("GVOPENOPS","SUFFIX","PACKETISRECVD2","Expression",v.Local.sExpression)
+GUI.FrmMaster.GSGC_WORKLIST.SetStyleFormatConditionProperty("GVOPENOPS","SUFFIX","PACKETISRECVD2","BackColor","Yellow")
+V.Local.sExpression.Set("[MATL_ORDERED] = TRUE")
+GUI.FrmMaster.GSGC_WORKLIST.AddStyleFormatCondition("GVOPENOPS","SUFFIX","MATERIALORDEREDSUFFIX","Expression",v.Local.sExpression)
+GUI.FrmMaster.GSGC_WORKLIST.SetStyleFormatConditionProperty("GVOPENOPS","SUFFIX","MATERIALORDEREDSUFFIX","BackColor","Green")
+
+'SEQ
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SEQ","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SEQ","CAPTION","Seq")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SEQ","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SEQ","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SEQ","MINWIDTH",80)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SEQ","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SEQ","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SEQ","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SEQ","AllowSize",True)
+
+'JS
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JS","VISIBLE",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JS","CAPTION","JS")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JS","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JS","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JS","MINWIDTH",80)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JS","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JS","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JS","FIXED",FALSE)
+
+'JSS
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JSS","VISIBLE",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JSS","CAPTION","JSS")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JSS","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JSS","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JSS","MINWIDTH",80)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JSS","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JSS","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JSS","FIXED",FALSE)
+
+'PRIORITY
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PRIORITY","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PRIORITY","CAPTION","Priority")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PRIORITY","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PRIORITY","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PRIORITY","MINWIDTH",60)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PRIORITY","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PRIORITY","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PRIORITY","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PRIORITY","AllowSize",True)
+V.Local.sExpression.Set("[HIGHPRI] = '1'")
+GUI.FrmMaster.GSGC_WORKLIST.AddStyleFormatCondition("GVOPENOPS","PRIORITY","HIGHPRI1","Expression",v.Local.sExpression)
+GUI.FrmMaster.GSGC_WORKLIST.SetStyleFormatConditionProperty("GVOPENOPS","PRIORITY","HIGHPRI1","BackColor","Orange")
+V.Local.sExpression.Set("[HIGHPRI] = '2'")
+GUI.FrmMaster.GSGC_WORKLIST.AddStyleFormatCondition("GVOPENOPS","PRIORITY","HIGHPRI2","Expression",v.Local.sExpression)
+GUI.FrmMaster.GSGC_WORKLIST.SetStyleFormatConditionProperty("GVOPENOPS","PRIORITY","HIGHPRI2","BackColor","Red")
+
+
+'PRINTED
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PRINTED","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PRINTED","CAPTION","Prntd")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PRINTED","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PRINTED","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PRINTED","MINWIDTH",50)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PRINTED","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PRINTED","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PRINTED","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PRINTED","AllowSize",True)
+
+'RELEASED
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","RELEASED","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","RELEASED","CAPTION","Rlsd")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","RELEASED","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","RELEASED","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","RELEASED","MINWIDTH",50)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","RELEASED","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","RELEASED","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","RELEASED","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","RELEASED","AllowSize",True)
+
+'ONHOLD
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","ONHOLD","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","ONHOLD","CAPTION","Hold")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","ONHOLD","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","ONHOLD","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","ONHOLD","MINWIDTH",50)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","ONHOLD","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","ONHOLD","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","ONHOLD","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","ONHOLD","AllowSize",True)
+
+'SETUP
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SETUP","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SETUP","CAPTION","Setup")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SETUP","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SETUP","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SETUP","MINWIDTH",50)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SETUP","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SETUP","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SETUP","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","SETUP","AllowSize",True)
+
+'DESCRIPTION (sequence)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DESCRIPTION","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DESCRIPTION","CAPTION","Sequence Description")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DESCRIPTION","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DESCRIPTION","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DESCRIPTION","MINWIDTH",160)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DESCRIPTION","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DESCRIPTION","CELLHALIGNMENT","Left")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DESCRIPTION","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DESCRIPTION","AllowSize",True)
+
+'PART_DESCRIPTION
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PART_DESCRIPTION","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PART_DESCRIPTION","CAPTION","Work Order Description")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PART_DESCRIPTION","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PART_DESCRIPTION","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PART_DESCRIPTION","MINWIDTH",160)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PART_DESCRIPTION","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PART_DESCRIPTION","CELLHALIGNMENT","Left")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PART_DESCRIPTION","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PART_DESCRIPTION","AllowSize",True)
+
+'WORKCENTER
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORKCENTER","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORKCENTER","CAPTION","Workcenter")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORKCENTER","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORKCENTER","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORKCENTER","MINWIDTH",80)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORKCENTER","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORKCENTER","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORKCENTER","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORKCENTER","AllowSize",True)
+
+'WORKCENTER DEPARTMENT
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WCDEPT","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WCDEPT","CAPTION","Dept")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WCDEPT","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WCDEPT","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WCDEPT","MINWIDTH",80)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WCDEPT","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WCDEPT","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WCDEPT","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WCDEPT","AllowSize",True)
+
+'WORKGROUP
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORKGROUP","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORKGROUP","CAPTION","Workgroup")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORKGROUP","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORKGROUP","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORKGROUP","MINWIDTH",80)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORKGROUP","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORKGROUP","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORKGROUP","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORKGROUP","AllowSize",True)
+
+'OPERATION
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","OPERATION","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","OPERATION","CAPTION","Op Code")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","OPERATION","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","OPERATION","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","OPERATION","MINWIDTH",80)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","OPERATION","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","OPERATION","CELLHALIGNMENT","Left")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","OPERATION","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","OPERATION","AllowSize",True)
+
+'ROUTER
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","ROUTER","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","ROUTER","CAPTION","Router")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","ROUTER","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","ROUTER","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","ROUTER","MINWIDTH",120)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","ROUTER","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","ROUTER","CELLHALIGNMENT","Left")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","ROUTER","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","ROUTER","AllowSize",True)
+
+'PART
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PART","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PART","CAPTION","Part")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PART","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PART","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PART","MINWIDTH",120)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PART","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PART","CELLHALIGNMENT","Left")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PART","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PART","AllowSize",True)
+
+'UNITS_OPEN
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","UNITS_OPEN","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","UNITS_OPEN","CAPTION","Order Qty")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","UNITS_OPEN","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","UNITS_OPEN","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","UNITS_OPEN","MINWIDTH",80)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","UNITS_OPEN","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","UNITS_OPEN","CELLHALIGNMENT","Right")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","UNITS_OPEN","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","UNITS_OPEN","AllowSize",True)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","UNITS_OPEN","DisplayCustomNumeric","#,###,###,##0.00")
+
+'UNITS_COMPLETE
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","UNITS_COMPLETE","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","UNITS_COMPLETE","CAPTION","Qty Cmplt")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","UNITS_COMPLETE","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","UNITS_COMPLETE","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","UNITS_COMPLETE","MINWIDTH",80)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","UNITS_COMPLETE","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","UNITS_COMPLETE","CELLHALIGNMENT","RIGHT")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","UNITS_COMPLETE","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","UNITS_COMPLETE","AllowSize",True)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","UNITS_COMPLETE","DisplayCustomNumeric","#,###,###,##0.00")
+
+'HOURS_ESTIMATED
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_ESTIMATED","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_ESTIMATED","CAPTION","Est Hours")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_ESTIMATED","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_ESTIMATED","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_ESTIMATED","MINWIDTH",80)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_ESTIMATED","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_ESTIMATED","CELLHALIGNMENT","Right")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_ESTIMATED","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_ESTIMATED","AllowSize",True)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_ESTIMATED","DisplayCustomNumeric","#,###,###,##0.00")
+
+'HOURS_ACTUAL
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_ACTUAL","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_ACTUAL","CAPTION","Act Hours")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_ACTUAL","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_ACTUAL","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_ACTUAL","MINWIDTH",80)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_ACTUAL","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_ACTUAL","CELLHALIGNMENT","Right")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_ACTUAL","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_ACTUAL","AllowSize",True)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_ACTUAL","DisplayCustomNumeric","#,###,###,##0.00")
+
+'HOURS_REMAIN
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_REMAIN","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_REMAIN","CAPTION","Remain Hours")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_REMAIN","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_REMAIN","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_REMAIN","MINWIDTH",80)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_REMAIN","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_REMAIN","CELLHALIGNMENT","Right")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_REMAIN","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_REMAIN","AllowSize",True)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HOURS_REMAIN","DisplayCustomNumeric","#,###,###,##0.00")
+
+'DATE_START
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_START","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_START","CAPTION","Start Date")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_START","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_START","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_START","MINWIDTH",100)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_START","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_START","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_START","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_START","AllowSize",True)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_START","DisplayCustomDatetime","d")
+V.Local.sExpression.Set("[PASTDUE] = 'Y'")
+GUI.FrmMaster.GSGC_WORKLIST.AddStyleFormatCondition("GVOPENOPS","DATE_START","LATESTART","Expression",v.Local.sExpression)
+GUI.FrmMaster.GSGC_WORKLIST.SetStyleFormatConditionProperty("GVOPENOPS","DATE_START","LATESTART","BackColor","Orange")
+
+'DATE_DUE
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_DUE","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_DUE","CAPTION","Due Date")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_DUE","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_DUE","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_DUE","MINWIDTH",100)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_DUE","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_DUE","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_DUE","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_DUE","AllowSize",True)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_DUE","DisplayCustomDatetime","d")
+
+'CREW_SIZE
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","CREW_SIZE","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","CREW_SIZE","CAPTION","Crew Size")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","CREW_SIZE","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","CREW_SIZE","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","CREW_SIZE","MINWIDTH",60)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","CREW_SIZE","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","CREW_SIZE","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","CREW_SIZE","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","CREW_SIZE","AllowSize",True)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","CREW_SIZE","DisplayCustomNumeric","#,###,###,##0.00")
+
+'WORK_STARTED
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORK_STARTED","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORK_STARTED","CAPTION","Work Started")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORK_STARTED","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORK_STARTED","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORK_STARTED","MINWIDTH",80)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORK_STARTED","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORK_STARTED","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORK_STARTED","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","WORK_STARTED","AllowSize",True)
+
+'NOTES
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","NOTES","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","NOTES","CAPTION","Notes")
+'GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","NOTES","ALLOWEDIT",TRUE)
+'GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","NOTES","READONLY",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","NOTES","MINWIDTH",240)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","NOTES","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","NOTES","CELLHALIGNMENT","Left")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","NOTES","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","NOTES","AllowSize",True)
+F.Intrinsic.Control.If(V.Local.bIsInGroup)
+	GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","NOTES","CellBackColor","LightYellow")
+	GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","NOTES","READONLY",FALSE)
+	GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","NOTES","ALLOWEDIT",TRUE)
+F.Intrinsic.Control.Else
+	GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","NOTES","READONLY",TRUE)
+	GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","NOTES","ALLOWEDIT",FALSE)
+F.Intrinsic.Control.EndIf
+
+
+'MATL_ORDERED
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","MATL_ORDERED","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","MATL_ORDERED","CAPTION","Matl Ordered")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","MATL_ORDERED","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","MATL_ORDERED","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","MATL_ORDERED","MINWIDTH",80)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","MATL_ORDERED","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","MATL_ORDERED","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","MATL_ORDERED","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","MATL_ORDERED","AllowSize",True)
+V.Local.sExpression.Set("[MATL_ORDERED] = TRUE")
+GUI.FrmMaster.GSGC_WORKLIST.AddStyleFormatCondition("GVOPENOPS","MATL_ORDERED","MATERIALORDERED","Expression",v.Local.sExpression)
+GUI.FrmMaster.GSGC_WORKLIST.SetStyleFormatConditionProperty("GVOPENOPS","MATL_ORDERED","MATERIALORDERED","BackColor","Green")
+
+'DATE_MATL_ORDERED
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_MATL_ORDERED","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_MATL_ORDERED","CAPTION","Date Matl Ordered")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_MATL_ORDERED","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_MATL_ORDERED","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_MATL_ORDERED","MINWIDTH",100)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_MATL_ORDERED","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_MATL_ORDERED","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_MATL_ORDERED","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_MATL_ORDERED","AllowSize",True)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_MATL_ORDERED","DisplayCustomDatetime","d")
+GUI.FrmMaster.GSGC_WORKLIST.AddStyleFormatCondition("GVOPENOPS","DATE_MATL_ORDERED","MATERIALORDERED2","Expression",v.Local.sExpression)
+GUI.FrmMaster.GSGC_WORKLIST.SetStyleFormatConditionProperty("GVOPENOPS","DATE_MATL_ORDERED","MATERIALORDERED2","BackColor","Green")
+
+'STATUS
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","STATUS","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","STATUS","CAPTION","Status")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","STATUS","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","STATUS","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","STATUS","MINWIDTH",80)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","STATUS","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","STATUS","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","STATUS","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","STATUS","AllowSize",True)
+
+'PACKET_RECVD
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PACKET_RECVD","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PACKET_RECVD","CAPTION","Packet Rcvd")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PACKET_RECVD","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PACKET_RECVD","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PACKET_RECVD","MINWIDTH",80)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PACKET_RECVD","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PACKET_RECVD","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PACKET_RECVD","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PACKET_RECVD","AllowSize",True)
+
+'DATE_PACKET_RECVD
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_PACKET_RECVD","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_PACKET_RECVD","CAPTION","Date Packet Rcvd")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_PACKET_RECVD","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_PACKET_RECVD","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_PACKET_RECVD","MINWIDTH",100)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_PACKET_RECVD","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_PACKET_RECVD","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_PACKET_RECVD","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_PACKET_RECVD","AllowSize",True)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","DATE_PACKET_RECVD","DisplayCustomDatetime","d")
+
+'MACH_HOURS_REMAIN
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","MACH_HOURS_REMAIN","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","MACH_HOURS_REMAIN","CAPTION","Mach Hours")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","MACH_HOURS_REMAIN","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","MACH_HOURS_REMAIN","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","MACH_HOURS_REMAIN","MINWIDTH",80)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","MACH_HOURS_REMAIN","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","MACH_HOURS_REMAIN","CELLHALIGNMENT","Right")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","MACH_HOURS_REMAIN","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","MACH_HOURS_REMAIN","AllowSize",True)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","MACH_HOURS_REMAIN","DisplayCustomNumeric","#,###,###,##0.00")
+
+'PREVWORKCENTER
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PREVWORKCENTER","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PREVWORKCENTER","CAPTION","Prev WC")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PREVWORKCENTER","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PREVWORKCENTER","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PREVWORKCENTER","MINWIDTH",80)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PREVWORKCENTER","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PREVWORKCENTER","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PREVWORKCENTER","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PREVWORKCENTER","AllowSize",True)
+
+'PREVSEQCOMPL
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PREVSEQCOMPL","VISIBLE",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PREVSEQCOMPL","CAPTION","Prev Seg Compl")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PREVSEQCOMPL","ALLOWEDIT",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PREVSEQCOMPL","READONLY",TRUE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PREVSEQCOMPL","MINWIDTH",80)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PREVSEQCOMPL","HEADERHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PREVSEQCOMPL","CELLHALIGNMENT","CENTER")
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PREVSEQCOMPL","FIXED",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PREVSEQCOMPL","AllowSize",True)
+
+'HIGHPRI
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","HIGHPRI","VISIBLE",FALSE)
+
+'PASTDUE
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PASTDUE","VISIBLE",FALSE)
+
+'PREVSEQ
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PREVSEQ","VISIBLE",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","PREVSEQ","MINWIDTH",80)
+
+'JOBSFXPREVSEQ
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JOBSFXPREVSEQ","VISIBLE",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","JOBSFXPREVSEQ","MINWIDTH",80)
+
+'STATUSNUMBER
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","STATUSNUMBER","VISIBLE",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","STATUSNUMBER","MINWIDTH",80)
+
+'OLDSTATUSNUMBER
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","OLDSTATUSNUMBER","VISIBLE",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","OLDSTATUSNUMBER","MINWIDTH",80)
+
+'IND_FLAG
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","IND_FLAG","VISIBLE",FALSE)
+GUI.FrmMaster.GSGC_WORKLIST.SetColumnProperty("GVOPENOPS","IND_FLAG","MINWIDTH",50)
+
+GUI.FrmMaster.GSGC_WORKLIST.ResumeLayout()
+GUI.FrmMaster.GSGC_WORKLIST.MainView("GVOPENOPS")
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End 
+F.Intrinsic.Control.EndTry
+
+Program.Sub.Load_Gridview.End
+
+Program.Sub.Load_New_Ops_To_Custom_Table.Start
+f.Intrinsic.Control.Try
+v.Local.sError.Declare
+
+v.Local.sSQL.Declare
+
+'GRAB ALL JOB/SUFFIX/SEQ'S THAT ARE NOT IN THE CUSTOM TABLE FROM JOB_OPERATIONS
+v.Local.sSQL.Set("SELECT A.JOB, A.SUFFIX, A.SEQ AS SEQUENCE, '' AS NOTES, CONVERT(0,SQL_BIT) AS MATL_ORDERED, '1900-01-01' AS DATE_MATL_ORDERED, '1' AS STATUS, CONVERT(0,SQL_BIT) AS PACKET_RECVD, '1900-01-01' AS DATE_PACKET_RECVD FROM V_JOB_OPERATIONS A LEFT JOIN GCG_5728_WORK_LIST B ON B.JOB = A.JOB AND B.SUFFIX = A.SUFFIX AND B.SEQUENCE = A.SEQ WHERE B.PACKET_RECVD IS NULL AND LMO = 'L' AND A.SEQ < '995000' AND DATE_COMPLETED = '1900-01-01' ORDER BY A.JOB, A.SUFFIX, A.SEQ;")
+
+'CREATE DATATABLE
+f.Data.DataTable.CreateFromSQL("dtNewOps","con",v.Local.sSQL)
+
+'CHECK IF DT IS EMPTY
+f.Intrinsic.Control.If(v.DataTable.dtNewOps.RowCount,<>,0)
+	'SAVE TO CUSTOM TABLE
+	f.Data.DataTable.SaveToDB("dtNewOps","con","GCG_5728_WORK_LIST","JOB*!*SUFFIX*!*SEQUENCE",128)
+f.Intrinsic.Control.EndIf
+'CLOSE IT UP
+f.Data.DataTable.Close("dtNewOps")
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End 
+F.Intrinsic.Control.EndTry
+
+Program.Sub.Load_New_Ops_To_Custom_Table.End
+
+Program.Sub.checktable.Start
+	F.Intrinsic.Control.Try
+	V.Local.sError.Declare
+	
+	V.Local.bTable.Declare(Boolean)
+
+	F.ODBC.Connection!con.TableExists("GCG_5728_WORK_LIST",V.Local.bTable)
+	F.Intrinsic.Control.If(V.Local.bTable,=,False)
+		F.ODBC.Connection!Con.Execute("CREATE TABLE GCG_5728_WORK_LIST (JOB CHAR(6) NOT NULL, SUFFIX CHAR(3), SEQUENCE CHAR(6) NOT NULL, NOTES LONGVARCHAR, MATL_ORDERED BIT NOT NULL, DATE_MATL_ORDERED DATE, STATUS INTEGER NOT NULL, PACKET_RECVD BIT NOT NULL, DATE_PACKET_RECVD DATE );")
+		F.ODBC.Connection!Con.Execute("CREATE UNIQUE INDEX GCG_5728_WORK_LIST USING 1 ON GCG_5728_WORK_LIST (JOB,SUFFIX,SEQUENCE);")
+	F.Intrinsic.Control.EndIf
+	
+	F.Intrinsic.Control.Catch
+		F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+		F.Intrinsic.UI.Msgbox(V.Local.sError)
+		F.Intrinsic.Control.End 
+	F.Intrinsic.Control.EndTry
+Program.Sub.checktable.End
+
+Program.Sub.FrmMaster_UnLoad.Start
+F.Intrinsic.Control.CallSub(Serialize)
+F.ODBC.Connection!con.Close
+F.Intrinsic.Control.End
+Program.Sub.FrmMaster_UnLoad.End
+
+Program.Sub.GSGC_WORKLIST_CellValueChanged.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+
+v.Local.sWO.Declare
+v.Local.sSuf.Declare
+v.Local.sSeq.Declare
+V.Local.sSQL.Declare
+V.Local.sText.Declare
+V.Local.sTextTbl.Declare
+
+'GRAB JOB,SUFFIX,SEQ -- ADD NEW ROW IF DOES NOT EXIST, OR UPDATE NOTES FIELD IF IT DOES.
+Gui.FrmMaster.GSGC_WORKLIST.GetCellValueByColumnName("GVOPENOPS","JOB",V.Args.RowIndex,V.Local.sWO)
+Gui.FrmMaster.GSGC_WORKLIST.GetCellValueByColumnName("GVOPENOPS","SUFFIX",V.Args.RowIndex,V.Local.sSuf)
+Gui.FrmMaster.GSGC_WORKLIST.GetCellValueByColumnName("GVOPENOPS","SEQ",V.Args.RowIndex,V.Local.sSeq)
+Gui.FrmMaster.GSGC_WORKLIST.GetCellValueByColumnName("GVOPENOPS","NOTES",V.Args.RowIndex,V.Local.sTextTbl)
+
+F.Intrinsic.String.Build("SELECT JOB, SUFFIX, SEQUENCE, NOTES FROM GCG_5728_WORK_LIST WHERE JOB = '{0}' AND SUFFIX = '{1}' AND SEQUENCE = '{2}';",V.Local.sWO,V.Local.sSuf,V.Local.sSeq,V.Local.sSQL)
+F.ODBC.Connection!con.OpenRecordsetRW("rstNotes",V.Local.sSQL)
+F.Intrinsic.Control.If(V.ODBC.con!rstNotes.EOF,=,True)
+	F.Intrinsic.String.Build("INSERT INTO GCG_5728_WORK_LIST (JOB,SUFFIX,SEQUENCE,NOTES) VALUES('{0}','{1}','{2}','{3}');",V.Local.sWO,V.Local.sSuf,V.Local.sSeq,V.Local.sTextTbl.PSQLFriendly,V.Local.sSQL)
+	F.ODBC.Connection!con.Execute(V.Local.sSQL)
+F.Intrinsic.Control.Else
+	F.Intrinsic.String.Build("UPDATE GCG_5728_WORK_LIST SET NOTES = '{0}' WHERE JOB = '{1}' AND SUFFIX = '{2}' AND SEQUENCE = '{3}';",V.Local.sTextTbl.PSQLFriendly,V.Local.sWO,V.Local.sSuf,V.Local.sSeq,V.Local.sSQL)
+	F.ODBC.Connection!con.Execute(V.Local.sSQL)
+F.Intrinsic.Control.EndIf
+F.ODBC.con!rstNotes.Close
+F.Intrinsic.Control.CallSub(SaveXML)
+
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End 
+F.Intrinsic.Control.EndTry
+Program.Sub.GSGC_WORKLIST_CellValueChanged.End
+
+Program.Sub.SaveXML.Start
+	F.Intrinsic.Control.Try
+	V.Local.sError.Declare
+	
+	V.Local.sDT.Declare
+	V.Local.sRename.Declare
+	V.Local.sXML.Declare
+	V.Local.iRet.Declare
+	V.Local.iCnt.Declare
+	V.Local.bExists.Declare
+	v.Local.dDateTime.Declare
+
+	'f.Intrinsic.UI.CloseWaitDialog
+	'f.Intrinsic.UI.InvokeWaitDialog("Updating Cache File...","Please Wait")
+
+	F.Intrinsic.String.Build("{0}\GAB_5728_{1}_WORKLIST.xml",V.Caller.FilesDir,V.Caller.CompanyCode,V.Local.sXML)
+	F.Intrinsic.File.Exists(V.Local.sXML,V.Local.bExists)
+	'If the file exists we need to delete it
+	F.Intrinsic.Control.If(V.Local.bExists)
+		'This is seeing what the date/time stamp is of the current XML file
+		F.Intrinsic.File.GetFileDateTimeExtended(V.Local.sXML,3,True,v.Local.dDateTime)
+		'If the date/time stamp of the xml file that was originally used matches the date/time stamp of the current xml file then we can delete it because it's not updated. If it doesn't match then don't delete it because it's more recent/updated.
+		F.Intrinsic.Control.If(V.Local.dDateTime,=,V.Global.dDateTime)
+			F.Intrinsic.File.DeleteFile(V.Local.sXML)
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndIf
+	
+	F.Data.DataTable.SaveToXML("dtOpenOps",0,TRUE,V.Local.sXML)
+	
+	'F.Intrinsic.UI.CloseWaitDialog
+	
+	F.Intrinsic.Control.Catch
+		F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+		F.Intrinsic.UI.Msgbox(V.Local.sError)
+		F.Intrinsic.Control.End 
+	F.Intrinsic.Control.EndTry
+Program.Sub.SaveXML.End
+
+Program.Sub.GSGC_WORKLIST_RowCellClick.Start
+F.Intrinsic.Control.Try
+	V.Local.sError.Declare
+	
+	v.Local.sTemp.Declare
+	v.Local.sSuf.Declare
+	v.Local.sJob.Declare
+	v.Local.sSequence.Declare
+	V.Local.sPart.Declare
+	v.Local.sLoc.Declare
+	V.Local.sParams.Declare
+	V.Local.iDayTrf.Declare
+	V.Local.iMonthTrf.Declare
+	V.Local.iYearTrf.Declare
+	V.Local.sSQL.Declare
+	V.Local.sWC.Declare
+	V.Local.sWG.Declare
+	V.Local.iPID.Declare
+	V.Local.sGabFile.Declare
+	V.Local.sHold.Declare
+	V.Local.iHold.Declare
+	V.Local.bHold.Declare
+	V.Local.bRel.Declare
+	V.Local.sExpression.Declare
+	V.Local.bIsInGroup.Declare
+	F.Global.Security.IsInGroup(V.Caller.User,"WORKLIST",V.Caller.CompanyCode,V.Local.bIsInGroup)
+
+	Gui.FrmMaster.GSGC_WORKLIST.GetCellValueByColumnName("GVOPENOPS","JOB",V.Args.RowIndex,V.Local.sJob)
+	Gui.FrmMaster.GSGC_WORKLIST.GetCellValueByColumnName("GVOPENOPS","SUFFIX",V.Args.RowIndex,V.Local.sSuf)
+	Gui.FrmMaster.GSGC_WORKLIST.GetCellValueByColumnName("GVOPENOPS","SEQ",V.Args.RowIndex,V.Local.sSequence)
+
+	F.Intrinsic.Control.If(V.Local.bIsInGroup)
+		f.Intrinsic.Control.SelectCase(v.Args.Column)
+			'JOB,SUFFIX
+			f.Intrinsic.Control.CaseAny("JOB","SUFFIX")
+				'Build Call Wrapper String - VIEW WO
+				F.Intrinsic.String.Concat("7","!*!",V.Local.sJob,"!*!",V.Local.sSuf,"!*!","A",V.Local.sTemp)
+				F.Global.General.CallWrapperSync(450000,V.Local.sTemp)
+			'PRINTED
+	'		F.Intrinsic.Control.Case("PRINTED")
+	'			F.Intrinsic.Control.If(V.Args.CellValue.Not)
+	'				F.Intrinsic.Control.CallSub("UPDATE_WO_VALUES","JOB",V.Local.sJob,"SUFFIX",V.Local.sSuf,"FIELDNAME",V.Args.COLUMN,"WOVALUE",TRUE)
+	'			F.Intrinsic.Control.EndIf
+	'			f.Intrinsic.String.Build("{0}!*!{1}!*!1811",V.Local.sJob,V.Local.sSuf,V.Local.sTemp)
+	'			F.Global.General.CallWrapperSync(900100,V.Local.sTemp)
+	'			F.Intrinsic.Control.CallSub(SaveXML)
+	'commented this out because I don't think they're supposed to be able to put jobs on hold or release them.
+	'		F.Intrinsic.Control.Case("ONHOLD")
+	'			Gui.FrmMaster.GSGC_WORKLIST.GetCellValueByColumnName("GVOPENOPS","JOB",V.Args.RowIndex,V.Local.sJob)
+	'			Gui.FrmMaster.GSGC_WORKLIST.GetCellValueByColumnName("GVOPENOPS","SUFFIX",V.Args.RowIndex,V.Local.sSuf)
+	'			F.Intrinsic.Control.If(V.Args.CellValue)
+	'				V.Local.sHold.Set("N")
+	'				V.Local.iHold.Set(0)
+	'				V.Local.bHold.Set(False)
+	'				F.Intrinsic.Control.CallSub("UPDATE_WO_VALUES","JOB",V.Local.sJob,"SUFFIX",V.Local.sSuf,"FIELDNAME",V.Args.COLUMN,"WOVALUE",FALSE)
+	'			F.Intrinsic.Control.Else
+	'				V.Local.sHold.Set("Y")
+	'				V.Local.iHold.Set(1)
+	'				V.Local.bHold.Set(True)
+	'				F.Intrinsic.Control.CallSub("UPDATE_WO_VALUES","JOB",V.Local.sJob,"SUFFIX",V.Local.sSuf,"FIELDNAME",V.Args.COLUMN,"WOVALUE",TRUE)
+	'			F.Intrinsic.Control.EndIf
+	'			F.Intrinsic.String.Build("UPDATE JOB_HEADER SET FLAG_HOLD = '{0}' WHERE JOB = '{1}' AND SUFFIX = '{2}';",V.Local.sHold,V.Local.sJob,V.Local.sSuf,V.Local.sSQL)
+	'			F.ODBC.Connection!con.Execute(V.Local.sSQL)
+	'			F.Intrinsic.String.Build("UPDATE APSV3_JBMASTER SET HOLD = '{0}' WHERE JOB = '{1}' AND SFX = '{2}';",V.Local.iHold,V.Local.sJob,V.Local.sSuf,V.Local.sSQL)
+	'			F.ODBC.Connection!con.Execute(V.Local.sSQL)
+	'			F.Intrinsic.Control.CallSub(SaveXML)
+	'		F.Intrinsic.Control.Case("RELEASED")
+	'			Gui.FrmMaster.GSGC_WORKLIST.GetCellValueByColumnName("GVOPENOPS","JOB",V.Args.RowIndex,V.Local.sJob)
+	'			Gui.FrmMaster.GSGC_WORKLIST.GetCellValueByColumnName("GVOPENOPS","SUFFIX",V.Args.RowIndex,V.Local.sSuf)
+	'			F.Intrinsic.Control.If(V.Args.CellValue,=,False)
+	'				F.Intrinsic.String.Build("UPDATE JOB_HEADER SET FLAG_WO_RELEASED = 'Y' WHERE JOB = '{0}' AND SUFFIX = '{1}';",V.Local.sJob,V.Local.sSuf,V.Local.sSQL)
+	'				F.ODBC.Connection!con.Execute(V.Local.sSQL)
+	'				V.Local.bRel.Set(True)
+	'				F.Intrinsic.Control.CallSub("UPDATE_WO_VALUES","JOB",V.Local.sJob,"SUFFIX",V.Local.sSuf,"FIELDNAME",V.Args.COLUMN,"WOVALUE",TRUE)
+	'			F.Intrinsic.Control.Else
+	'				F.Intrinsic.String.Build("UPDATE JOB_HEADER SET FLAG_WO_RELEASED = 'N' WHERE JOB = '{0}' AND SUFFIX = '{1}';",V.Local.sJob,V.Local.sSuf,V.Local.sSQL)
+	'				F.ODBC.Connection!con.Execute(V.Local.sSQL)
+	'				V.Local.bRel.Set(False)
+	'				F.Intrinsic.Control.CallSub("UPDATE_WO_VALUES","JOB",V.Local.sJob,"SUFFIX",V.Local.sSuf,"FIELDNAME",V.Args.COLUMN,"WOVALUE",FALSE)
+	'			F.Intrinsic.Control.EndIf
+	'			F.Intrinsic.Control.CallSub(SaveXML)
+			'Material Ordered
+			F.Intrinsic.Control.Case("MATL_ORDERED")
+				'If Material has not been ordered yet
+				F.Intrinsic.Control.If(V.Args.CellValue,=,False)
+					F.Intrinsic.String.Build("UPDATE GCG_5728_WORK_LIST SET MATL_ORDERED = 1, DATE_MATL_ORDERED = '{3}'  WHERE JOB = '{0}' AND SUFFIX = '{1}' AND SEQUENCE = '{2}';",V.Local.sJob,V.Local.sSuf,V.Local.sSequence,V.Ambient.Date.PervasiveDate,V.Local.sSQL)
+					F.ODBC.Connection!con.Execute(V.Local.sSQL)
+					Gui.FrmMaster.GSGC_WORKLIST.SetCellValueByColumnName("GVOPENOPS","MATL_ORDERED",V.Args.RowIndex,True)
+					Gui.FrmMaster.GSGC_WORKLIST.SetCellValueByColumnName("GVOPENOPS","DATE_MATL_ORDERED",V.Args.RowIndex,V.Ambient.Date)
+					F.Intrinsic.Control.CallSub("WRITE_MATERIAL_REQUEST","JOB",V.Local.sJob,"SUFFIX",V.Local.sSuf,"SEQUENCE",V.Local.sSequence,"ORDERMATL",TRUE)
+				'Material has already been ordered.
+	'For now, don't let them "unrequest it"
+				F.Intrinsic.Control.Else
+	'				F.Intrinsic.String.Build("UPDATE GCG_5728_WORK_LIST SET MATL_ORDERED = 0, DATE_MATL_ORDERED = '1900-01-01' WHERE JOB = '{0}' AND SUFFIX = '{1}' AND SEQUENCE = '{2}';",V.Local.sJob,V.Local.sSuf,V.Local.sSequence,V.Local.sSQL)
+	'				F.ODBC.Connection!con.Execute(V.Local.sSQL)
+	'				Gui.FrmMaster.GSGC_WORKLIST.SetCellValueByColumnName("GVOPENOPS","MATL_ORDERED",V.Args.RowIndex,False)
+	'				Gui.FrmMaster.GSGC_WORKLIST.SetCellValueByColumnName("GVOPENOPS","DATE_MATL_ORDERED",V.Args.RowIndex,"1900-01-01")
+	'				F.Intrinsic.Control.CallSub("WRITE_MATERIAL_REQUEST","JOB",V.Local.sJob,"SUFFIX",V.Local.sSuf,"SEQUENCE",V.Local.sSequence,"ORDERMATL",TRUE)
+				F.Intrinsic.Control.EndIf
+				F.Intrinsic.Control.CallSub(SaveXML)
+			'Packet Received
+			F.Intrinsic.Control.Case("PACKET_RECVD")		
+				F.Intrinsic.Control.If(V.Args.CellValue,=,False)
+					F.Intrinsic.String.Build("UPDATE GCG_5728_WORK_LIST SET PACKET_RECVD = 1, DATE_PACKET_RECVD = '{3}'  WHERE JOB = '{0}' AND SUFFIX = '{1}' AND SEQUENCE = '{2}';",V.Local.sJob,V.Local.sSuf,V.Local.sSequence,V.Ambient.Date.PervasiveDate,V.Local.sSQL)
+					F.ODBC.Connection!con.Execute(V.Local.sSQL)
+					Gui.FrmMaster.GSGC_WORKLIST.SetCellValueByColumnName("GVOPENOPS","PACKET_RECVD",V.Args.RowIndex,True)
+					Gui.FrmMaster.GSGC_WORKLIST.SetCellValueByColumnName("GVOPENOPS","DATE_PACKET_RECVD",V.Args.RowIndex,V.Ambient.Date)
+				F.Intrinsic.Control.Else
+					F.Intrinsic.String.Build("UPDATE GCG_5728_WORK_LIST SET PACKET_RECVD = 0, DATE_PACKET_RECVD = '1900-01-01'  WHERE JOB = '{0}' AND SUFFIX = '{1}' AND SEQUENCE = '{2}';",V.Local.sJob,V.Local.sSuf,V.Local.sSequence,V.Local.sSQL)
+					F.ODBC.Connection!con.Execute(V.Local.sSQL)
+					Gui.FrmMaster.GSGC_WORKLIST.SetCellValueByColumnName("GVOPENOPS","PACKET_RECVD",V.Args.RowIndex,False)
+					Gui.FrmMaster.GSGC_WORKLIST.SetCellValueByColumnName("GVOPENOPS","DATE_PACKET_RECVD",V.Args.RowIndex,"1900-01-01")
+				F.Intrinsic.Control.EndIf
+	'			GUI.FrmMaster.GSGC_WORKLIST.RemoveStyleFormatCondition("GVOPENOPS","JOB","PACKETISRECVD")
+	'			GUI.FrmMaster.GSGC_WORKLIST.RemoveStyleFormatCondition("GVOPENOPS","SUFFIX","PACKETISRECVD2")
+	'			V.Local.sExpression.Set("[PACKET_RECVD] = TRUE")
+	'			GUI.FrmMaster.GSGC_WORKLIST.AddStyleFormatCondition("GVOPENOPS","SUFFIX","PACKETISRECVD2","Expression",v.Local.sExpression)
+	'			GUI.FrmMaster.GSGC_WORKLIST.SetStyleFormatConditionProperty("GVOPENOPS","SUFFIX","PACKETISRECVD2","BackColor","Yellow")
+	'			GUI.FrmMaster.GSGC_WORKLIST.AddStyleFormatCondition("GVOPENOPS","JOB","PACKETISRECVD","Expression",v.Local.sExpression)
+	'			GUI.FrmMaster.GSGC_WORKLIST.SetStyleFormatConditionProperty("GVOPENOPS","JOB","PACKETISRECVD","BackColor","Yellow")
+				F.Intrinsic.Control.CallSub(SaveXML)
+		F.Intrinsic.Control.EndSelect
+	F.Intrinsic.Control.Else
+		F.Intrinsic.Control.SelectCase(v.Args.Column)
+			'JOB,SUFFIX
+		f.Intrinsic.Control.CaseAny("JOB","SUFFIX")
+			'Build Call Wrapper String - VIEW WO
+			F.Intrinsic.String.Concat("7","!*!",V.Local.sJob,"!*!",V.Local.sSuf,"!*!","A",V.Local.sTemp)
+			F.Global.General.CallWrapperSync(450000,V.Local.sTemp)
+		F.Intrinsic.Control.EndSelect
+	F.Intrinsic.Control.EndIf
+	
+	F.Intrinsic.Control.Catch
+		F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+		F.Intrinsic.UI.Msgbox(V.Local.sError)
+		F.Intrinsic.Control.End 
+	F.Intrinsic.Control.EndTry
+Program.Sub.GSGC_WORKLIST_RowCellClick.End
+
+Program.Sub.UPDATE_WO_VALUES.Start
+v.Local.sFilter.Declare
+
+F.Intrinsic.String.Build("JOB = '{0}' AND SUFFIX = '{1}'",V.Args.JOB,V.Args.SUFFIX,V.Local.sFilter)
+F.Data.DataView.Create("dtOpenOps","dvJOBSUFFIXVALUECHANGE",22,V.Local.sFilter,"")
+F.Data.DataView.SetValue("dtOpenOps","dvJOBSUFFIXVALUECHANGE",-1,V.Args.FIELDNAME,V.Args.WOVALUE)
+F.Data.DataView.Close("dtOpenOps","dvJOBSUFFIXVALUECHANGE")
+
+Program.Sub.UPDATE_WO_VALUES.End
+
+Program.Sub.WRITE_MATERIAL_REQUEST.Start
+'CHECK TO SEE IF INCOMING ARG IS TRUE OR FALSE...TRUE WOULD MEAN WRITE THE REQUEST, FALSE WOULD MEAN REMOVE IT.
+V.Local.sJob.Declare
+V.Local.sSuffix.Declare
+V.Local.sSequence.Declare
+V.Local.bOrderMatl.Declare
+
+V.Local.sJob.Set(V.Args.Job)
+V.Local.sSuffix.Set(V.Args.Suffix)
+V.Local.sSequence.Set(V.Args.Sequence)
+V.Local.bOrderMatl.Set(V.Args.OrderMatl)
+
+F.Intrinsic.Control.CallSub(GCG_5708_GET_MATL_SEQ,"Job",v.Local.sJob,"Suffix",v.Local.sSuffix,"Sequence",v.Local.sSequence)
+
+'Now that we have the list of Materials, write the request.
+
+
+Program.Sub.WRITE_MATERIAL_REQUEST.End
+
+Program.Sub.Serialize.Start
+	F.Intrinsic.Control.Try
+	V.Local.sError.Declare
+	
+	V.Local.sSerialize.Declare
+	
+	'SERIALIZE
+	Gui.FrmMaster.GSGC_WORKLIST.Serialize("GVOPENOPS",V.Local.sSerialize)
+	F.Global.Registry.AddValue(V.Caller.User,V.Caller.CompanyCode,"GVOPENOPS",5728,1000,False,"Serialize",False,0,-999.0,1/1/1980,12:00:00 AM,V.Local.sSerialize)
+	
+	F.Intrinsic.Control.Catch
+		F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+		F.Intrinsic.UI.Msgbox(V.Local.sError)
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndTry
+Program.Sub.Serialize.End
+
+Program.Sub.Deserialize.Start
+	F.Intrinsic.Control.Try
+	V.Local.sError.Declare
+	
+	V.Local.sSerialize.Declare
+	
+	'Delete old registry records
+	F.Global.Registry.ReadValue(V.Caller.User,V.Caller.CompanyCode,"GVOPENOPS",5728,0,5,"",V.Local.sSerialize)
+	F.Intrinsic.Control.If(V.Local.sSerialize,<>,"")
+		F.ODBC.Connection!common.OpenConnection(V.Ambient.Ccon,V.Ambient.Cuser,V.Ambient.Cpass)
+		F.ODBC.Connection!common.Execute("Delete From Gs_Registry Where Reg_ID = 5728 And Seq < 1000;")
+		F.ODBC.Connection!common.Close
+	F.Intrinsic.Control.EndIf
+
+	'DESERIALIZE
+	F.Global.Registry.ReadValue(V.Caller.User,V.Caller.CompanyCode,"GVOPENOPS",5728,1000,6,"",V.Local.sSerialize)
+	F.Intrinsic.Control.If(V.Local.sSerialize,<>,"")
+		Gui.FrmMaster.GSGC_WORKLIST.Deserialize(V.Local.sSerialize)
+	F.Intrinsic.Control.EndIf
+	
+	F.Intrinsic.Control.Catch
+		F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+		F.Intrinsic.UI.Msgbox(V.Local.sError)
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndTry
+Program.Sub.Deserialize.End
+
+Program.Sub.SetContextMenus.Start
+	F.Intrinsic.Control.Try
+	V.Local.sError.Declare
+	
+	Gui.FrmMaster..ContextMenuCreate("ctxMain")
+	Gui.FrmMaster.GSGC_WORKLIST.ContextMenuAttach("ctxMain")
+	Gui.FrmMaster..ContextMenuAddItem("ctxMain","Refresh",0,"Refresh")
+	Gui.FrmMaster..ContextMenuAddItem("ctxMain","Export",0,"Export")
+	'Gui.FrmMaster..ContextMenuAddItem("ctxMain","ResetColumns",0,"Reset Columns")
+	Gui.FrmMaster..ContextMenuSetItemEventHandler("ctxMain","Refresh","MenuClickRefresh")
+	Gui.FrmMaster..ContextMenuSetItemEventHandler("ctxMain","Export","MenuClickExport")
+	'Gui.FrmMaster..ContextMenuSetItemEventHandler("ctxMain","ResetColumns","MenuClickResetColumns")
+	
+	F.Intrinsic.Control.Catch
+		F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+		F.Intrinsic.UI.Msgbox(V.Local.sError)
+		F.Intrinsic.Control.End 
+	F.Intrinsic.Control.EndTry
+Program.Sub.SetContextMenus.End
+
+Program.Sub.MenuClickRefresh.Start
+	F.Intrinsic.Control.Try
+	V.Local.sError.Declare
+
+	F.Intrinsic.Control.BlockEvents
+	GUI.FrmMaster.GSGC_WORKLIST.SuspendLayout()
+	f.Intrinsic.Control.CallSub(Serialize)
+	v.Global.bCache.Set(True)
+	F.Intrinsic.Control.CallSub(Load_Datatables)
+	F.Intrinsic.Control.CallSub(Load_Gridview)
+	F.Intrinsic.Control.CallSub(Deserialize)
+	GUI.FrmMaster.GSGC_WORKLIST.ResumeLayout()
+	F.Intrinsic.Control.UnBlockEvents
+	
+	F.Intrinsic.Control.Catch
+		F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+		F.Intrinsic.UI.Msgbox(V.Local.sError)
+		F.Intrinsic.Control.End 
+	F.Intrinsic.Control.EndTry
+Program.Sub.MenuClickRefresh.End
+
+Program.Sub.MenuClickExport.Start
+	F.Intrinsic.Control.Try
+	V.Local.sError.Declare
+	
+	V.Local.sFileExport.Declare
+	V.Local.bExcel.Declare
+	V.Local.bFileLocked.Declare
+	V.Local.sMsg.Declare
+	V.Local.sControl.Declare
+	
+
+	V.Local.sControl.Set("GSGC_WORKLIST")
+
+	F.Automation.MSExcel.CheckPresence(V.Local.bExcel)
+	F.Intrinsic.Control.If(V.Local.bExcel)
+		F.Intrinsic.String.Build("{0}\GCG_5728_{1}_Export.xlsx",V.Caller.LocalGssTempDir,V.Local.sControl,V.Local.sFileExport)
+		F.Intrinsic.File.IsFileLocked(V.Local.sFileExport,V.Local.bFileLocked)
+		F.Intrinsic.Control.If(V.Local.bFileLocked)
+			F.Intrinsic.String.Build("File is already open. Please close and export again.{0}File: {1}",V.Ambient.NewLine,V.Local.sFileExport,V.Local.sMsg)
+			F.Intrinsic.UI.Msgbox(V.Local.sMsg,"File In Use")
+		F.Intrinsic.Control.Else
+			Gui.FrmMaster.[V.Local.sControl].Export(V.Local.sFileExport,"xlsx")
+			F.Intrinsic.Task.ShellExec(0,"",V.Local.sFileExport,"","",1)
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.Else
+		F.Intrinsic.String.Build("{0}\GCG_5728_{1}_Export.csv",V.Caller.LocalGssTempDir,V.Local.sControl,V.Local.sFileExport)
+		F.Intrinsic.File.IsFileLocked(V.Local.sFileExport,V.Local.bFileLocked)
+		F.Intrinsic.Control.If(V.Local.bFileLocked)
+			F.Intrinsic.String.Build("File is already open. Please close and export again.{0}File: {1}",V.Ambient.NewLine,V.Local.sFileExport,V.Local.sMsg)
+			F.Intrinsic.UI.Msgbox(V.Local.sMsg,"File In Use")
+		F.Intrinsic.Control.Else
+			Gui.FrmMaster.[V.Local.sControl].Export(V.Local.sFileExport,"csv")
+		F.Intrinsic.Control.EndIf
+		F.Intrinsic.Task.ShellExec(0,"",V.Local.sFileExport,"","",1)
+	F.Intrinsic.Control.EndIf
+	
+	F.Intrinsic.Control.Catch
+		F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+		F.Intrinsic.UI.Msgbox(V.Local.sError)
+		F.Intrinsic.Control.End 
+	F.Intrinsic.Control.EndTry
+Program.Sub.MenuClickExport.End
+
+Program.Sub.MenuClickResetColumns.Start
+'RESET COLUMNS
+'F.Intrinsic.Control.Try
+'V.Local.sError.Declare
+
+'F.Global.Registry.AddValue(V.Caller.User,V.Caller.CompanyCode,"GVALL",4200,1000,False,"Serialize",False,0,-999.0,1/1/1980,12:00:00 AM,"")
+
+'V.Global.bResetColumns.Set(True)
+'F.Intrinsic.Control.CallSub(MenuClickRefresh)
+
+'F.Intrinsic.Control.Catch
+'	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+'	F.Intrinsic.UI.Msgbox(V.Local.sError)
+'	F.Intrinsic.Control.End 
+'F.Intrinsic.Control.EndTry
+Program.Sub.MenuClickResetColumns.End
+
+Program.Sub.Move_Old_Ops_To_History_Table.Start
+'MOVE ALL OPS THAT HAVE BEEN CLOSED FOR 1 WEEK TO HISTORY TABLE
+Program.Sub.Move_Old_Ops_To_History_Table.End
+
+Program.Sub.Update_Status.Start
+'UPDATE THE STATUS
+'1 - ARRIVING	- DEFAULT
+'2 - READY		- ALL MATERIAL IN THE WORKCENTER BIN, PREVIOUS OPER IS FINISHED, NO WORK FOR THIS OPER
+'3 - RUNNING	- LABOR OPER HAS BEEN STARTED
+
+V.Local.sSQL.Declare
+V.Local.sJob.Declare
+V.Local.sSuffix.Declare
+V.Local.sSequence.Declare
+v.Local.iCount.Declare
+V.Local.bWorkStarted.Declare
+V.Local.fQtyOrder.Declare
+V.Local.bAllMaterialReady.Declare
+v.Local.sMessage.Declare
+V.Local.sJobSuffix.Declare
+
+'Check if ARRIVING is ready to be changed
+F.Data.DataView.Create("dtOpenOps","dvStatusArriving",22,"OLDSTATUSNUMBER = '1'","")
+F.Data.DataView.ToDataTable("dtOpenOps","dvStatusArriving","dtStatusArriving")
+F.Data.DataView.Close("dtOpenOps","dvStatusArriving")
+'F.Intrinsic.UI.InvokeWaitDialog("Updating Status...")
+	
+	v.Local.sSQL.Set("SELECT RTRIM(PART) AS PART, QTY_ONHAND FROM V_INVENTORY_ALL WHERE QTY_ONHAND > 0; ")
+	F.Data.Dictionary.CreateFromSQL("dicMatlOnhand","con",v.Local.sSQL)
+	F.Data.Dictionary.SetDefaultReturn("dicMatlOnhand",0.00)
+	
+	'ADD WORK ORDER HEADER QTY
+	V.Local.sSQL.Set("SELECT CONCAT(JOB,SUFFIX) AS JS, QTY_ORDER FROM V_JOB_HEADER WHERE DATE_CLOSED = '1900-01-01';")
+	'F.ODBC.Connection!con.EXECUTEANDRETURN(V.Local.sSQL,V.Local.fQtyOrder)
+	F.Data.Dictionary.CreateFromSQL("dicQtyOrder","con",v.Local.sSQL)
+	F.Data.Dictionary.SetDefaultReturn("dicQtyOrder",0.00)
+
+'for testing
+'F.Intrinsic.Control.For(v.Local.iCount,0,500,1)
+F.Intrinsic.Control.For(v.Local.iCount,0,v.DataTable.dtStatusArriving.RowCount--,1)
+	'f.Intrinsic.String.Build("Updating record {0} of {1}...",v.Local.iCount,v.DataTable.dtStatusArriving.RowCount--,v.Local.sMessage)
+	'f.Intrinsic.UI.ChangeWaitStatus(v.Local.sMessage,v.Local.iCount,0,v.DataTable.dtStatusArriving.RowCount--)
+	'If work has been started then it's now a status of RUNNING
+	F.Intrinsic.Control.If(V.DataTable.dtStatusArriving(V.Local.iCount).WORK_STARTED!FieldVal)
+		F.Data.DataTable.SetValue("dtStatusArriving",V.Local.iCount,"STATUSNUMBER",3)
+'		F.Intrinsic.Control.Next(v.Local.iCount)
+		f.Intrinsic.Control.GoTo(MoveNext)
+	F.Intrinsic.Control.EndIf
+	'SET JOB/SUFFIX/SEQ -- Call lib to get list of material tied to labor sequence
+	V.Local.sJob.Set(V.DataTable.dtStatusArriving(V.Local.iCount).JOB!FieldVal)
+	V.Local.sSuffix.Set(V.DataTable.dtStatusArriving(V.Local.iCount).SUFFIX!FieldVal)
+	V.Local.sSequence.Set(V.DataTable.dtStatusArriving(V.Local.iCount).SEQ!FieldVal)
+	F.Intrinsic.Control.CallSub(GCG_5708_GET_MATL_SEQ,"Job",v.Local.sJob,"Suffix",v.Local.sSuffix,"Sequence",v.Local.sSequence)
+	
+	'ADD QTY_ONHAND COLUMN
+	F.Data.DataTable.AddColumn("GetMatlSeq","QTY_ONHAND","FLOAT")
+	F.Data.DataTable.FillFromDictionary("GetMatlSeq","dicMatlOnhand","PART","QTY_ONHAND")
+'	F.Data.Dictionary.Close("dicMatlOnhand")
+	
+	'ADD WORK ORDER HEADER QTY
+	F.Data.DataTable.AddColumn("GetMatlSeq","QTYORDER","FLOAT",V.Local.fQtyOrder)
+	F.Intrinsic.String.Build("{0}{1}",V.Local.sJob,V.Local.sSuffix,V.Local.sJobSuffix)
+	F.Data.DataTable.AddColumn("GetMatlSeq","JS","STRING",V.Local.sJobSuffix)
+	F.Data.DataTable.FillFromDictionary("GetMatlSeq","dicQtyOrder","JS","QTYORDER")
+	
+	'Check if there's enough material onhand for each sequence
+	F.Data.DataTable.AddExpressionColumn("GetMatlSeq","ENOUGHMATERIAL","BOOLEAN","IIF((QTYORDER*EST_QTY_PER)<=QTY_ONHAND,True,False)")
+	F.Data.DataView.Create("GetMatlSeq","dvAllMaterialReady",22,"ENOUGHMATERIAL = FALSE","")
+	F.Data.DataView.ToDataTable("GetMatlSeq","dvAllMaterialReady","dtAllMaterialReady")
+	F.Data.DataView.Close("GetMatlSeq","dvAllMaterialReady")
+	'Check to see if there are any rows that didn't have all material ready
+	F.Intrinsic.Control.If(V.DataTable.dtAllMaterialReady.RowCount,>,0)
+		v.Local.bAllMaterialReady.Set(False)
+	F.Intrinsic.Control.Else
+		V.Local.bAllMaterialReady.Set(True)
+	F.Intrinsic.Control.EndIf
+	F.Data.DataTable.Close("dtAllMaterialReady")
+	'READY
+	F.Intrinsic.Control.If(V.DataTable.dtStatusArriving(V.Local.iCount).PREVSEQCOMPL!FieldVal,=,True,AND,V.Local.bAllMaterialReady,=,True)
+		F.Data.DataTable.SetValue("dtStatusArriving",V.Local.iCount,"STATUSNUMBER",2)
+'		F.Intrinsic.Control.Next(v.Local.iCount)
+		f.Intrinsic.Control.GoTo(MoveNext)
+	F.Intrinsic.Control.EndIf
+	F.Data.DataTable.SetValue("dtStatusArriving",V.Local.iCount,"STATUSNUMBER",1)
+F.Intrinsic.Control.Label(MoveNext)
+F.Intrinsic.Control.Next(v.Local.iCount)
+
+F.Data.DataView.Create("dtStatusArriving","dvUpdatedStatus",22,"STATUSNUMBER <> '1' AND STATUSNUMBER <> ''","")
+F.Data.DataView.ToDataTable("dtStatusArriving","dvUpdatedStatus","dtUpdatedStatus")
+F.Data.DataView.Close("dtStatusArriving","dvUpdatedStatus")
+
+F.Data.DataTable.SaveToDB("dtUpdatedStatus","con","GCG_5728_WORK_LIST","JOB*!*SUFFIX*!*SEQ",256,"JOB@!@JOB*!*SUFFIX@!@SUFFIX*!*SEQ@!@SEQUENCE*!*STATUSNUMBER@!@STATUS")
+F.Data.DataTable.Close("dtUpdatedStatus")
+
+V.Local.sSQL.Set("SELECT CONCAT(JOB,CONCAT(SUFFIX,SEQUENCE)) AS JSS, CASE WHEN STATUS = 1 THEN 'ARRIVING' WHEN STATUS = 2 THEN 'READY' WHEN STATUS = 3 THEN 'RUNNING' END AS STATUS FROM GCG_5728_WORK_LIST;")
+F.Data.Dictionary.CreateFromSQL("dicStatus","con",v.Local.sSQL)
+F.Data.Dictionary.SetDefaultReturn("dicStatus","ARRIVING")
+F.Data.DataTable.FillFromDictionary("dtOpenOps","dicStatus","JSS","STATUS")
+F.Data.Dictionary.Close("dicStatus")
+
+V.Local.sSQL.Set("SELECT CONCAT(JOB,CONCAT(SUFFIX,SEQUENCE)) AS JSS, STATUS AS STATUSNUMBER FROM GCG_5728_WORK_LIST;")
+F.Data.Dictionary.CreateFromSQL("dicStatusNumber","con",v.Local.sSQL)
+F.Data.Dictionary.SetDefaultReturn("dicStatusNumber","1")
+F.Data.DataTable.FillFromDictionary("dtOpenOps","dicStatusNumber","JSS","STATUSNUMBER")
+F.Data.Dictionary.Close("dicStatusNumber")
+
+Program.Sub.Update_Status.End
